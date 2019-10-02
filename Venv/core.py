@@ -1,7 +1,7 @@
 import cv2
 import serial
 import sys
-import time
+from time import sleep
 import math
 
 import numpy as np
@@ -27,7 +27,10 @@ with canvas(device) as draw:
     draw.text((0, 0), "ScorpionIPX", fill="white")
     draw.text((0, 8), "ETTI v{}".format(__version__), fill="white")
 
+sleep(3)
+
 OUTPUT_BASE_DIR = r'/home/pi/Documents/ETTI_CAR_OUTPUTS'
+
 
 
 MILISECOND = 0.001
@@ -73,7 +76,8 @@ CRUISE_TURNS = 55
 STEP_DELAY = 0.0015
 
 COMMAND_DELAY = 0.005
-NONE_COMMAND_COUNTER_THRESHOLD = 150
+NONE_COMMAND_COUNTER_THRESHOLD = 125
+STOP_COMMAND_COUNTER_THRESHOLD = 50
 
 ser = None
 camera = None
@@ -200,10 +204,12 @@ def center_steering():
         if angle == previous_angle:
             same_angle_cnt += 1
             if same_angle_cnt >= 5:
-                print('Stepper mechanically blocked or ADC not working properly!')
-                return
+                print('Stepper disconnected,  mechanically blocked or ADC not working properly!')
+                return False
         else:
             same_angle_cnt = 0
+
+    return True
             
 
 
@@ -371,12 +377,15 @@ def test_serial():
 
 
 def auto():
+    KI = False
     session_name = 'ETTI_CAR_{}'.format(int(time.time()))
     session_out_dir = OUTPUT_BASE_DIR + r'/' + session_name
     os.makedirs(session_out_dir)
     
     stop_auto = False
     auto_cnt = 0
+    old_dir = 'NONE'
+    emergency_stopped = False
     try:
         global camera
         global raw_capture
@@ -417,16 +426,26 @@ def auto():
         with canvas(device) as draw:
             draw.text((0, 0), "Centering wheels...", fill="white")
         time.sleep(1)
-        center_steering()
+        if center_steering():
+            pass
+        else:
+            with canvas(device) as draw:
+                draw.text((0, 0), "steering error!\ncheck ADC or motor", fill="white")
+                time.sleep(1)
+            return
+
         time.sleep(1)
         with canvas(device) as draw:
             draw.text((0, 0), "Wheels centered!", fill="white")
         time.sleep(1)
-            
+
         with canvas(device) as draw:
             draw.text((0, 0), "System running...", fill="white")
         print('Starting recording...')
         none_counter = 0
+        stop_counter = 0
+        
+        shut_down_signal = False
 
         for frame in camera.capture_continuous(raw_capture, format="bgr", use_video_port=True):
 
@@ -561,14 +580,24 @@ def auto():
     ##            cv2.putText(image, '{}', (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), lineType=cv2.LINE_AA)
             
     ##        cv2.putText(image, '{}'.format(direction), (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), lineType=cv2.LINE_AA)
-
             if direction == 'NONE':
                 none_counter += 1
                 if none_counter > NONE_COMMAND_COUNTER_THRESHOLD:
-                    print('NONE counter max reached!')
-                    direction = 'STOP'
+                    emergency_stopped = True
+                    stop()
+                    stop()
+                    stop()
+                    none_counter = 0
             else:
                 none_counter = 0
+                
+            if direction == 'STOP':
+                stop_counter += 1
+                if stop_counter > STOP_COMMAND_COUNTER_THRESHOLD:
+                    shut_down_signal = True
+            else:
+                stop_counter = 0
+                    
 
             if direction == 'FWD':
                 fwd(CRUISE_SPEED)
@@ -615,11 +644,29 @@ def auto():
                 stop()
                 stop()
                 print('WARNING!!! Unknown direction: {}'.format(direction))
+                
+            
+            if direction != 'NONE':
+                old_dir = direction
+                if direction != "STOP":
+                    emergency_stopped = False
+            
+            with canvas(device) as draw:
+                _str = '{} -> {}\n'.format(old_dir, direction)
+                if emergency_stopped:
+                    _str += 'Emergency stopped\n'
+                
+                if stop_counter > 10:
+                    _str += "Shutting down [{}%]\n".format(100 * stop_counter // STOP_COMMAND_COUNTER_THRESHOLD)
+                    
+                if none_counter > 40:
+                    _str += "Emergency stop [{}%]".format(100 * none_counter // NONE_COMMAND_COUNTER_THRESHOLD)
+                draw.text((0, 0), "{}".format(_str), fill="white")
             
             # show the frame
-            cv2.imshow("Original frame", image)
+            # cv2.imshow("Original frame", image)
         ##    cv2.imshow("Grey frame", grey_image)
-            cv2.imshow("Binary frame", binary_image)
+            # cv2.imshow("Binary frame", binary_image)
             
             key = cv2.waitKey(1) & 0xFF
 
@@ -627,7 +674,7 @@ def auto():
             raw_capture.truncate(0)
 
             # if the `q` key was pressed, break from the loop
-            if key == ord("q") or stop_auto:
+            if key == ord("q") or stop_auto or shut_down_signal:
                 stop()
                 stop()
                 stop()
@@ -641,6 +688,7 @@ def auto():
     except KeyboardInterrupt:
         print('Stopped by user!')
         stop_auto = True
+        KI = True
         pass
     
     except Exception as err:
@@ -653,4 +701,17 @@ def auto():
         cv2.destroyAllWindows()
         with canvas(device) as draw:
             draw.text((0, 0), "System stopped!", fill="white")
+ 
+    with canvas(device) as draw:
+        draw.text((0, 0), "System stopped!", fill="white")
+
+    sleep(2) 
+
+    with canvas(device) as draw:
+        draw.text((0, 0), "Shutting down...\nWait 30 seconds\nbefore switch off!", fill="white")
+
+    sleep(2)
+    if not KI:
+        os.system('shutdown -h --no-wall now')
+       
 
