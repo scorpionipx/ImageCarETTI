@@ -394,6 +394,7 @@ def auto():
         if not init_serial():
             with canvas(device) as draw:
                 draw.text((0, 0), "serial init failed", fill="white")
+                time.sleep(10)
             return
 
         with canvas(device) as draw:
@@ -403,6 +404,7 @@ def auto():
         if not init_camera():
             with canvas(device) as draw:
                 draw.text((0, 0), "camera init failed", fill="white")
+                time.sleep(10)
             return
 
         with canvas(device) as draw:
@@ -413,6 +415,7 @@ def auto():
         if not init_steering():
             with canvas(device) as draw:
                 draw.text((0, 0), "GPIO init failed", fill="white")
+                time.sleep(10)
             return
 
         with canvas(device) as draw:
@@ -431,7 +434,7 @@ def auto():
         else:
             with canvas(device) as draw:
                 draw.text((0, 0), "steering error!\ncheck ADC or motor", fill="white")
-                time.sleep(1)
+                time.sleep(10)
             return
 
         time.sleep(1)
@@ -441,7 +444,9 @@ def auto():
 
         with canvas(device) as draw:
             draw.text((0, 0), "System running...", fill="white")
+        time.sleep(1)
         print('Starting recording...')
+        time.sleep(1)
         none_counter = 0
         stop_counter = 0
         
