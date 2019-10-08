@@ -2,7 +2,12 @@ import cv2
 import serial
 import sys
 from time import sleep
+import time
+
+sleep(.2)
+
 import math
+from random import random
 
 import numpy as np
 import RPi.GPIO as GPIO
@@ -14,22 +19,42 @@ from luma.core.interface.serial import i2c
 from luma.core.render import canvas
 from luma.oled.device import ssd1306, ssd1325, ssd1331, sh1106
 
-import time
 import os
 
 __version__ = '1.0.0'
 
+sleep(.1)
+print('Preparing I2C...')
 serial_interface = i2c(port=1, address=0x3C)
+sleep(.1)
+print('Initiating display...')
 device = ssd1306(serial_interface, rotate=0, height=32)
+sleep(.1)
+
+
+BATTERY_MAX_VOLTAGE = 214
+BATTERY_LOW_VOLTAGE = 160  # ~12.5V
 
 # Box and text rendered in portrait mode
-with canvas(device) as draw:
-    draw.text((0, 0), "ScorpionIPX", fill="white")
-    draw.text((0, 8), "ETTI v{}".format(__version__), fill="white")
+
+def write_on_display(text):
+    global device
+
+    try:
+        with canvas(device) as draw:
+            draw.text((0, 0), '{}'.format(text), fill='white')
+    except Exception as err:
+        print(err)
+
+
+
+
+write_on_display('ScorpionIPX\nETTI v{}'.format(__version__))
+
 
 sleep(3)
 
-OUTPUT_BASE_DIR = r'/home/pi/Documents/ETTI_CAR_OUTPUTS'
+OUTPUT_BASE_DIR = r'/home/pi/Documents/ETTI_IPX_CAR_OUTPUTS'
 
 
 
@@ -111,7 +136,7 @@ def init_camera():
         camera.color_effects = (128, 128)  # grayscale
         raw_capture = PiRGBArray(camera, size=(WIDTH, HEIGHT))
         print('Warming up PICamera...')
-        time.sleep(0.5)
+        sleep(0.5)
         print('Camera initiated!')
         return True
     except Exception as err:
@@ -141,12 +166,12 @@ def init_serial():
 def get_steering_angle():
     global ser
     ser.read_all()  # clear buffer
-    time.sleep(MILISECOND)
+    sleep(MILISECOND)
     
     ser.write([0x5A])
-    time.sleep(MILISECOND)
+    sleep(MILISECOND)
     ser.write([1])
-    time.sleep(2 * MILISECOND)
+    sleep(2 * MILISECOND)
 
 ##    steering_angle = ord(ser.read(1))
 ##    print('SWA: {}'.format(steering_angle))
@@ -160,13 +185,33 @@ def get_steering_angle():
     return steering_angle
 
 
+def get_battery_voltage():
+    global ser
+    ser.read_all()  # clear buffer
+    sleep(MILISECOND)
+    
+    ser.write([0x6B])
+    sleep(MILISECOND)
+    ser.write([1])
+    sleep(5 * MILISECOND)
+
+    if ser.in_waiting >= 1:
+        battery_voltage = ord(ser.read(1))
+        print('VBAT: {}'.format(battery_voltage))
+    else:
+        battery_voltage = -1
+        print('Timeout [get_battery_voltage]')
+
+    return battery_voltage
+
+
 def steer_right(turns):
     sequence = STEPPER_FULL_STEP_SEQUENCE.copy()
     for i in range(turns):
         for step in range(len(sequence)):
             for pin_index, pin in enumerate(stepper_pins):
                 GPIO.output(pin, sequence[step][pin_index])
-                time.sleep(STEP_DELAY)
+                sleep(STEP_DELAY)
                 
     for pin in stepper_pins:
         GPIO.output(pin, 0)
@@ -179,7 +224,7 @@ def steer_left(turns):
         for step in range(len(sequence)):
             for pin_index, pin in enumerate(stepper_pins):
                 GPIO.output(pin, sequence[step][pin_index])
-                time.sleep(STEP_DELAY)
+                sleep(STEP_DELAY)
                 
     for pin in stepper_pins:
         GPIO.output(pin, 0)
@@ -210,7 +255,6 @@ def center_steering():
             same_angle_cnt = 0
 
     return True
-            
 
 
 def steer_max_left():
@@ -297,11 +341,11 @@ def test_steering():
         return
 
     steer_right(CRUISE_TURNS)
-    time.sleep(SECOND)
+    sleep(SECOND)
     steer_left(CRUISE_TURNS)
-    time.sleep(SECOND)
+    sleep(SECOND)
     steer_left(CRUISE_TURNS)
-    time.sleep(SECOND)
+    sleep(SECOND)
     steer_right(CRUISE_TURNS)
     GPIO.cleanup()
 
@@ -311,9 +355,9 @@ def stop():
     print('Stop')
     
     ser.write([0x39])
-    time.sleep(MILISECOND)
+    sleep(MILISECOND)
     ser.write([0])
-    time.sleep(MILISECOND)
+    sleep(MILISECOND)
 
 
 def fwd(speed=100):
@@ -324,9 +368,9 @@ def fwd(speed=100):
         speed = 255
     print('FWD: {}'.format(speed))
     ser.write([0x35])
-    time.sleep(MILISECOND)
+    sleep(MILISECOND)
     ser.write([speed])
-    time.sleep(5 * MILISECOND)
+    sleep(5 * MILISECOND)
 
 
 def bkwd(speed=100):
@@ -337,9 +381,9 @@ def bkwd(speed=100):
         speed = 255
     print('FWD: {}'.format(speed))
     ser.write([0x39])
-    time.sleep(MILISECOND)
+    sleep(MILISECOND)
     ser.write([speed])
-    time.sleep(5 * MILISECOND)
+    sleep(5 * MILISECOND)
 
 
 def test_swa():
@@ -349,7 +393,7 @@ def test_swa():
     
     while True:
         get_steering_angle()
-        time.sleep(.25)
+        sleep(.25)
         
         key = cv2.waitKey(1) & 0xFF
 
@@ -368,85 +412,113 @@ def test_serial():
         return
     
     fwd(CRUISE_SPEED)
-    time.sleep(2)
+    sleep(2)
     stop()
-    time.sleep(1)
+    sleep(1)
     bkwd(CRUISE_SPEED)
-    time.sleep(2)
+    sleep(2)
     stop()
 
+shut_down_signal = False
 
 def auto():
+    global shut_down_signal
     KI = False
-    session_name = 'ETTI_CAR_{}'.format(int(time.time()))
+    session_name = 'ETTI_CAR_{}_{}'.format(int(time.time()), str(random())[-4:])
     session_out_dir = OUTPUT_BASE_DIR + r'/' + session_name
-    os.makedirs(session_out_dir)
+    try:
+        os.makedirs(session_out_dir)
+    except Exception as err:
+        print(err)
     
     stop_auto = False
     auto_cnt = 0
     old_dir = 'NONE'
     emergency_stopped = False
+    
+    battery_level_showed = False
+    
     try:
         global camera
         global raw_capture
         global ser
         
         if not init_serial():
-            with canvas(device) as draw:
-                draw.text((0, 0), "serial init failed", fill="white")
-                time.sleep(10)
+            write_on_display('UART error!')
+            sleep(10)
             return
 
-        with canvas(device) as draw:
-            draw.text((0, 0), "serial interface ok", fill="white")
-        time.sleep(1)
+        write_on_display('UART ok!')
+        sleep(1)
+        
+        write_on_display('Checking battery...')
+        sleep(.5)
+        
+        battery_voltage = get_battery_voltage()
+        while battery_voltage == -1:
+            battery_voltage = get_battery_voltage()
+            
+        battery_voltage_percent = (battery_voltage * 100) // BATTERY_MAX_VOLTAGE
+        if battery_voltage < BATTERY_LOW_VOLTAGE:
+            shut_down_signal = True
+            write_on_display('Battery {}%\nLow voltage'.format(battery_voltage_percent))
+            sleep(5)
+            write_on_display('Shut down in 20s\nBattery low! {}%'.format(battery_voltage_percent))
+            sleep(20)
+            
+                        
+            GPIO.cleanup()
+            cv2.destroyAllWindows()
+            camera.close()
+                        
+            write_on_display('Shutting down...')
+            sleep(1)
+            write_on_display('Wait 30 seconds\nbefore switch OFF')
+            sleep(1)
+            os.system('shutdown -h --no-wall now')
+            return
+        else:
+            write_on_display('Battery {}%'.format(battery_voltage_percent))
+            sleep(1)
+            
+        sleep(1)
 
         if not init_camera():
-            with canvas(device) as draw:
-                draw.text((0, 0), "camera init failed", fill="white")
-                time.sleep(10)
+            write_on_display('Camera error!')
+            sleep(10)
             return
 
-        with canvas(device) as draw:
-            draw.text((0, 0), "camera ok", fill="white")
-        time.sleep(1)
+        write_on_display('Camera ok!')
+        sleep(1)
 
             
         if not init_steering():
-            with canvas(device) as draw:
-                draw.text((0, 0), "GPIO init failed", fill="white")
-                time.sleep(10)
+            write_on_display('GPIO/Steering error!')
+            sleep(10)
             return
 
-        with canvas(device) as draw:
-            draw.text((0, 0), "GPIO ok", fill="white")
-        time.sleep(1)
+        write_on_display('GPIO/Steering ok')
+        sleep(1)
 
-        with canvas(device) as draw:
-            draw.text((0, 0), "System ok", fill="white")
-        time.sleep(1)
-
-        with canvas(device) as draw:
-            draw.text((0, 0), "Centering wheels...", fill="white")
-        time.sleep(1)
+        write_on_display('Centering wheels...')
+        sleep(1)
         if center_steering():
             pass
         else:
-            with canvas(device) as draw:
-                draw.text((0, 0), "steering error!\ncheck ADC or motor", fill="white")
-                time.sleep(10)
+            write_on_display('Steering error!\ncheck ADC & motor')
+            sleep(10)
             return
 
-        time.sleep(1)
-        with canvas(device) as draw:
-            draw.text((0, 0), "Wheels centered!", fill="white")
-        time.sleep(1)
+        sleep(1)
+        write_on_display('Wheels centered!')
+        sleep(1)
+            
+        
 
-        with canvas(device) as draw:
-            draw.text((0, 0), "System running...", fill="white")
-        time.sleep(1)
+        write_on_display('System running...')
+        sleep(1)
         print('Starting recording...')
-        time.sleep(1)
+        sleep(1)
         none_counter = 0
         stop_counter = 0
         
@@ -593,6 +665,7 @@ def auto():
                     stop()
                     stop()
                     none_counter = 0
+                    
             else:
                 none_counter = 0
                 
@@ -604,35 +677,38 @@ def auto():
                 stop_counter = 0
                     
 
+            if direction != "STOP":
+                battery_level_showed = False
+
             if direction == 'FWD':
                 fwd(CRUISE_SPEED)
                 center_steering()
-                time.sleep(COMMAND_DELAY)
+                sleep(COMMAND_DELAY)
                 cv2.imwrite(session_out_dir  + r'/FWD' + str(auto_cnt) + ".jpg", image)
             elif direction == 'FWD LEFT':
                 fwd(CRUISE_SPEED)
                 steer_max_left()
-                time.sleep(COMMAND_DELAY)
+                sleep(COMMAND_DELAY)
                 cv2.imwrite(session_out_dir  + r'/FWDL' + str(auto_cnt) + ".jpg", image)
             elif direction == 'FWD RIGHT':
                 fwd(CRUISE_SPEED)
                 steer_max_right()
-                time.sleep(COMMAND_DELAY)
+                sleep(COMMAND_DELAY)
                 cv2.imwrite(session_out_dir  + r'/FWDR' + str(auto_cnt) + ".jpg", image)
             elif direction == 'BKWD':
                 bkwd(CRUISE_SPEED)
                 center_steering()
-                time.sleep(COMMAND_DELAY)
+                sleep(COMMAND_DELAY)
                 cv2.imwrite(session_out_dir  + r'/BKWD' + str(auto_cnt) + ".jpg", image)
             elif direction == 'BKWD LEFT':
                 bkwd(CRUISE_SPEED)
                 steer_max_left()
-                time.sleep(COMMAND_DELAY)
+                sleep(COMMAND_DELAY)
                 cv2.imwrite(session_out_dir  + r'/BKWDL' + str(auto_cnt) + ".jpg", image)
             elif direction == 'BKWD RIGHT':
                 bkwd(CRUISE_SPEED)
                 steer_max_right()
-                time.sleep(COMMAND_DELAY)
+                sleep(COMMAND_DELAY)
                 cv2.imwrite(session_out_dir  + r'/BKWDR' + str(auto_cnt) + ".jpg", image)
             elif direction == 'STOP':
                 print('DIRECTION STOP')
@@ -642,6 +718,41 @@ def auto():
                 if none_counter < NONE_COMMAND_COUNTER_THRESHOLD:
                     cv2.imwrite(session_out_dir  + r'/STOP' + str(auto_cnt) + ".jpg", image)
                 none_counter = 0
+            
+                if not battery_level_showed:
+                    battery_level_showed = True
+                    battery_voltage = get_battery_voltage()
+                    while battery_voltage == -1:
+                        battery_voltage = get_battery_voltage()
+                        
+                    battery_voltage_percent = (battery_voltage * 100) // BATTERY_MAX_VOLTAGE
+                    if battery_voltage < BATTERY_LOW_VOLTAGE:
+                        shut_down_signal = True
+                        
+                        stop()
+                        stop()
+                        stop()
+                        
+                        write_on_display('Battery {}%\nLow voltage'.format(battery_voltage_percent))
+                        sleep(5)
+                        write_on_display('Shut down in 20s\nBattery low! {}%'.format(battery_voltage_percent))
+                        sleep(20)
+                        
+                        GPIO.cleanup()
+                        cv2.destroyAllWindows()
+                        camera.close()
+                        
+                        write_on_display('Shutting down...')
+                        sleep(1)
+                        write_on_display('Wait 30 seconds\nbefore switch OFF')
+                        sleep(1)
+                        os.system('shutdown -h --no-wall now')
+                        
+                        return
+                    else:
+                        write_on_display('Battery {}%'.format(battery_voltage_percent))
+                        sleep(1)
+                
             elif direction == 'NONE':
                 pass
             else:
@@ -656,17 +767,16 @@ def auto():
                 if direction != "STOP":
                     emergency_stopped = False
             
-            with canvas(device) as draw:
-                _str = '{} -> {}\n'.format(old_dir, direction)
-                if emergency_stopped:
-                    _str += 'Emergency stopped\n'
+            _str = '{} -> {}\n'.format(old_dir, direction)
+            if emergency_stopped:
+                _str += 'Emergency stopped\n'
+            
+            if stop_counter > 10:
+                _str += "Shutting down [{}%]\n".format(100 * stop_counter // STOP_COMMAND_COUNTER_THRESHOLD)
                 
-                if stop_counter > 10:
-                    _str += "Shutting down [{}%]\n".format(100 * stop_counter // STOP_COMMAND_COUNTER_THRESHOLD)
-                    
-                if none_counter > 40:
-                    _str += "Emergency stop [{}%]".format(100 * none_counter // NONE_COMMAND_COUNTER_THRESHOLD)
-                draw.text((0, 0), "{}".format(_str), fill="white")
+            if none_counter > 40:
+                _str += "Emergency stop [{}%]".format(100 * none_counter // NONE_COMMAND_COUNTER_THRESHOLD)
+            write_on_display("{}".format(_str))
             
             # show the frame
             # cv2.imshow("Original frame", image)
@@ -687,14 +797,19 @@ def auto():
                 cv2.destroyAllWindows()
                 camera.close()
                 print('Stopped recording!')        
-                with canvas(device) as draw:
-                    draw.text((0, 0), "System stopped!", fill="white")
+                write_on_display('System stopped...')
                 break
     except KeyboardInterrupt:
         print('Stopped by user!')
         stop_auto = True
         KI = True
-        pass
+        stop()
+        stop()
+        stop()
+        GPIO.cleanup()
+        cv2.destroyAllWindows()
+        camera.close()
+        return
     
     except Exception as err:
         print(err)
@@ -702,21 +817,20 @@ def auto():
         stop()
         stop()
         GPIO.cleanup()
-        time.sleep(.5)
+        sleep(.5)
         cv2.destroyAllWindows()
-        with canvas(device) as draw:
-            draw.text((0, 0), "System stopped!", fill="white")
+        write_on_display('System stopped...')
  
-    with canvas(device) as draw:
-        draw.text((0, 0), "System stopped!", fill="white")
+    write_on_display('System stopped...')
 
-    sleep(2) 
-
-    with canvas(device) as draw:
-        draw.text((0, 0), "Shutting down...\nWait 30 seconds\nbefore switch off!", fill="white")
 
     sleep(2)
-    if not KI:
+    if shut_down_signal:
+        write_on_display('Shutting down...')
+        sleep(1)
+        write_on_display('Wait 30 seconds\nbefore switch OFF')
+        sleep(1)
         os.system('shutdown -h --no-wall now')
-       
 
+        
+       
